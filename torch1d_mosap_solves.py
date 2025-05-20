@@ -8,12 +8,14 @@ import matplotlib.pyplot as plt
 Script for solving the MOSAP problem for torch1D-only covariances
 """
 
+
 home = os.getenv('HOME')
 # in_dir = home + "/bedonian1/torch1d_resample_sens_r8/"
 # suffix = ''
 # suffix = '_massflux'
 # suffix = '_massflux_core'
-suffix = '_time_avg'
+# suffix = '_time_avg'
+suffix = '_trunc'
 # out_dirs = [home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse"]
 # out_dirs = [home + "/bedonian1/tps2d_mf_post_r1/", home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse", home + "/bedonian1/torch1d_post_r1_pilot_4s"]
 # out_dirs = [home + "/bedonian1/tps2d_mf_post_r1_far/", home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse", home + "/bedonian1/torch1d_post_r1_pilot_4s"]
@@ -26,33 +28,49 @@ out_dirs = [home + "/bedonian1/tps2d_mf_post_r1_massflux/", home + "/bedonian1/t
 # out_names = ["1D_Fine", "1D_Mid", "1D_Coarse", "1D_4Species"]
 # out_names = ["2D_Axi", "1D_Fine", "1D_Mid", "1D_Coarse", "1D_4Species"]
 out_names = ["2D_Axi", "1D_Fine", "1D_Mid", "1D_Coarse"]
-# max_sample = 0 # no limit
-# max_sample = 64
-
 # non-pilot samples, use these for the actual MLBLUE evaluation, not for the MOSAP
 # provide as groups of directories
-# NOTE: some spoofing, reuse of pilot samples
 # G4: tps2d, t1d_coarse
 # G2: t1d_coarse
 # G1: t1d_coarse
-# NOTE NOTE NOTE FILL WITH ACTUAL SAMPLE DIRECTORIES WHEN DONE, AND FIX PROC_FAC, AND MAKE SAMPLER RANDOM AGAIN
+
 comp_dirs = {
-    'G1': [None, None, None, home + "/bedonian1/torch1d_post_r1_pilot_coarse"],
-    'G2': [None, None, None, home + "/bedonian1/torch1d_post_r1_pilot_coarse"],
+    'G1': [None, None, None, home + "/bedonian1/torch1d_post_r1_G1_coarse"],
+    'G2': [None, None, None, home + "/bedonian1/torch1d_post_r1_G2_coarse"],
     'G3': [None, None, None, None],
-    'G4': [home + "/bedonian1/tps2d_mf_post_r1_massflux/", None, None, home + "/bedonian1/torch1d_post_r1_pilot_coarse"]
+    'G4': [home + "/bedonian1/tps2d_mf_post_r1_G4/", None, None, home + "/bedonian1/torch1d_post_r1_G4_coarse"]
 }
 
+# keep track of failed tps2d cases
+c_exclude = {
+   'G1': [],
+   'G2': [],
+   'G3': [16, 95, 120],
+   'G4': [18, 71, 74]
+}
 
-[home + "/bedonian1/tps2d_mf_post_r1_massflux/", home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse"]#, home + "/bedonian1/torch1d_post_r1_pilot_4s"]
+# define costs
+# costs = np.array([12*60*60, 15*60, 11*60, 7*60])
+proc_fac = 112 # number of procs per tps run
+# proc_fac = 1 # number of procs per tps run
+costs = np.array([proc_fac*11.6*60*60, 17*60, 14*60, 11*60])
+
+# contract all models and dependent arrays to the indices of this list
+restrict = [0, 3]
+# restrict = list(range(len(out_names)))
 
 
+# statistical error threshold
+eps_fac = 0.05
+
+# max_sample = 0 # no limit
+# max_sample = 64
+# for pilot samples only
 max_sample = 48
 exclude = []
 exclude = [60]
-c_exclude = [60]
-proc_fac = 112 # number of procs per tps run
-proc_fac = 1 # number of procs per tps run
+
+
 
 make_plots = False
 # do single output for now
@@ -63,24 +81,27 @@ out_use = [['exit_d', 0],
            ['exit_X', 0]]
 # out_use = [['exit_X', 0]]
 
+# 
+
+
+
+
+
+
+
+
+
+
+##########################################################################################################
+
+# apply restriction first
+out_dirs = [out_dirs[x] for x in restrict]
+out_names = [out_names[x] for x in restrict]
+for key in comp_dirs.keys():
+    comp_dirs[key] = [comp_dirs[key][x] for x in restrict]
+costs = [costs[x] for x in restrict]
 
 n_outputs = len(out_use)
-
-# define costs somewhat arbitrarily
-# costs = np.array([12*60*60, 15*60, 11*60, 7*60])
-# costs = np.array([10.6*60*60, 15*60, 11*60, 7*60])
-costs = np.array([proc_fac*10.6*60*60, 15*60, 11*60, 7*60])
-
-# statistical error threshold
-eps_fac = 0.05
-
-
-
-
-
-
-
-
 
 ##############################################################################
 
@@ -160,10 +181,9 @@ for sg in comp_dirs.keys():
         with open(fqoiv, 'rb') as f:
             c_qoi_val[sg][out_names[i]] = pickle.load(f)
 
-        glist = [p for p in range(max_sample) if p not in c_exclude]
+        glist = [p for p in range( c_qoi_val[sg][out_names[i]][qoi].shape[0]) if p not in c_exclude[sg]]
         for qoi in qoi_list:
             c_qoi_val[sg][out_names[i]][qoi] = c_qoi_val[sg][out_names[i]][qoi][glist,:]
-
 qoi_sizes = {
     'exit_p': 1, 
     'exit_d': 2, 
@@ -286,7 +306,8 @@ class Problem_Exp(BLUEProblem):
         # Z = np.random.choice(n_pilot, L, replace=False)
 
         # NOTE BAD HACK FOR TESTING
-        Z = [self.BCOUNTER%n_pilot]*L
+        # HACK FIX THIS MONDAY
+        Z = [self.BCOUNTER%97]*L
         self.BCOUNTER += 1
         return Z
 
