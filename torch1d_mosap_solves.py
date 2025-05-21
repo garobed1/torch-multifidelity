@@ -34,18 +34,19 @@ out_names = ["2D_Axi", "1D_Fine", "1D_Mid", "1D_Coarse"]
 # G2: t1d_coarse
 # G1: t1d_coarse
 
+# home + "/bedonian1/torch1d_post_r1_G3_fine",
 comp_dirs = {
     'G1': [None, None, None, home + "/bedonian1/torch1d_post_r1_G1_coarse"],
     'G2': [None, None, None, home + "/bedonian1/torch1d_post_r1_G2_coarse"],
-    'G3': [None, None, None, None],
-    'G4': [home + "/bedonian1/tps2d_mf_post_r1_G4/", None, None, home + "/bedonian1/torch1d_post_r1_G4_coarse"]
+    'G3': [None, None, home + "/bedonian1/torch1d_post_r1_G3_mid", home + "/bedonian1/torch1d_post_r1_G3_coarse"],
+    'G4': [home + "/bedonian1/tps2d_mf_post_r1_G4/", home + "/bedonian1/torch1d_post_r1_G4_fine", home + "/bedonian1/torch1d_post_r1_G4_mid", home + "/bedonian1/torch1d_post_r1_G4_coarse"]
 }
 
 # keep track of failed tps2d cases
 c_exclude = {
    'G1': [],
    'G2': [],
-   'G3': [16, 95, 120],
+   'G3': [16, 95, 114, 120, 127,  146, 149, 156, 160, 187, 228],
    'G4': [18, 71, 74]
 }
 
@@ -56,8 +57,8 @@ proc_fac = 112 # number of procs per tps run
 costs = np.array([proc_fac*11.6*60*60, 17*60, 14*60, 11*60])
 
 # contract all models and dependent arrays to the indices of this list
-restrict = [0, 3]
-# restrict = list(range(len(out_names)))
+# restrict = [0, 3]
+restrict = list(range(len(out_names)))
 
 
 # statistical error threshold
@@ -109,6 +110,8 @@ n_outputs = len(out_use)
 
 def getSampleGroup(ls, exact = True):
     # get a sample group that (exactly, optional) provides requested samples
+    # if len(ls) > 1:
+    #     breakpoint()
 
     found = False
     for key in comp_dirs.keys():
@@ -130,7 +133,7 @@ def getSampleGroup(ls, exact = True):
                 break
 
     if not found:
-        Exception(f"No valid groups found for combo: {ls}")
+        raise Exception(f"No valid groups found for combo: {ls} (Exact = {exact})")
 
     return key
 
@@ -169,8 +172,10 @@ for i, out_dir in enumerate(out_dirs):
             
 # computation samples
 c_qoi_val = {}
+c_qoi_num = {}
 for sg in comp_dirs.keys():
     c_qoi_val[sg] = {}
+    c_qoi_num[sg] = 1e10 # number of available samples in group
 
     for i, out_dir in enumerate(comp_dirs[sg]):
         if out_dir is None:
@@ -184,6 +189,9 @@ for sg in comp_dirs.keys():
         glist = [p for p in range( c_qoi_val[sg][out_names[i]][qoi].shape[0]) if p not in c_exclude[sg]]
         for qoi in qoi_list:
             c_qoi_val[sg][out_names[i]][qoi] = c_qoi_val[sg][out_names[i]][qoi][glist,:]
+
+        c_qoi_num[sg] = min(c_qoi_num[sg], c_qoi_val[sg][out_names[i]][qoi_list[0]].shape[0])
+
 qoi_sizes = {
     'exit_p': 1, 
     'exit_d': 2, 
@@ -289,26 +297,39 @@ if make_plots:
 n_pilot = qoi_val[out_names[0]][qoi].shape[0]
 
 # breakpoint()
-
+sample_cache = {}
+flattened_groups = []
 
 class Problem_Exp(BLUEProblem):
 
     # NOTE BAD HACK!
-    def resetBC(self):
-        self.BCOUNTER = 0
+    def resetBC(self, groups):
+        # self.BCOUNTER = 0
+        self.BCOUNTER = {}
+        for i , group in enumerate(groups):
+            self.BCOUNTER[i] = 0
+
 
     def sampler(self, ls):
         L = len(ls)
 
         # use the case index as the input for now
-        
-        # NOTE NOTE NOTE FIX THIS ONCE WE HAVE RANDOM SAMPLES
+        # sg = getSampleGroup(ls, exact = False)
+        # Ns = c_qoi_num[sg]
         # Z = np.random.choice(n_pilot, L, replace=False)
 
         # NOTE BAD HACK FOR TESTING
         # HACK FIX THIS MONDAY
-        Z = [self.BCOUNTER%97]*L
-        self.BCOUNTER += 1
+        # Z = [self.BCOUNTER%97]*L
+        # self.BCOUNTER += 1
+
+        # this should work
+        fg = flattened_groups.index(ls)
+
+        Z = sample_cache[fg][self.BCOUNTER[fg]%c_qoi_num[sg]]
+
+        self.BCOUNTER[fg] += 1
+
         return Z
 
     # just reading the output
@@ -318,16 +339,16 @@ class Problem_Exp(BLUEProblem):
         out = [[0 for i in range(L)] for n in range(n_outputs)]
 
         # find the appropriate group to draw samples from
-        sg = getSampleGroup(ls)
+        sg = getSampleGroup(ls, exact = False)
 
         for i in range(L):
             # list order is important
             for n, output in enumerate(out_use):
                 if eval_sq:
                     # out[n][i] = qoi_val[out_names[ls[i]]][output[0]][samples[i], output[1]]**2
-                    out[n][i] = c_qoi_val[sg][out_names[ls[i]]][output[0]][samples[i], output[1]]**2
+                    out[n][i] = c_qoi_val[sg][out_names[ls[i]]][output[0]][samples, output[1]]**2
                 else:
-                    out[n][i] = c_qoi_val[sg][out_names[ls[i]]][output[0]][samples[i], output[1]]
+                    out[n][i] = c_qoi_val[sg][out_names[ls[i]]][output[0]][samples, output[1]]
 
         return out
 
@@ -358,7 +379,7 @@ C_use = [C[output[0]][output[1]] for output in out_use]
 # precomputed covariances
 # problem = Problem_T1D_Only(n_models, costs=costs, C=C[out_use[0]][out_use[1]], verbose=True)
 problem = Problem_Exp(n_models, n_outputs=n_outputs, costs=costs, C=C_use, verbose=True)
-problem.resetBC()
+
 ################################ PART 1 - Mean ########################################
 
 # Get covariance and correlation matrix
@@ -383,40 +404,59 @@ eps = [eps_fac*np.sqrt(problem.get_covariance(i)[0,0]) for i in range(n_outputs)
 
 
 # Solve with MLBLUE. K denotes the maximum group size allowed.
+# solves the opt problem
 MLBLUE_data = problem.setup_solver(K=n_models, eps=eps)
-sol_MLBLUE = problem.solve(K=n_models, eps=eps)
+
+
+# sol_MLBLUE = problem.solve(K=n_models, eps=eps)
 
 print("\n\nMLBLUE\n")
 print("MLBLUE data:\n")
 for key, item in MLBLUE_data.items(): print(key, ": ", item)
-print("MLBLUE solution: ", sol_MLBLUE[0])
 
-################################ PART 2 - Variance ########################################
 
-# NOTE BAD HACK
-problem.resetBC()
+
+
+# problem.resetBC()
 
 flattened_groups = problem.MOSAP_output['flattened_groups']
 sample_list = problem.MOSAP_output['samples']
+# sums = [[] for n in range(problem.n_outputs)]
+# for ls,N in zip(flattened_groups, sample_list):
+#     if N == 0:
+#         for n in range(problem.n_outputs):
+#             sums[n].append([0 for l in range(len(ls))])
+#         continue
+#     sumse,_,_ = problem.blue_fn(ls, N, verbose=False)
+#     for n in range(problem.n_outputs):
+#         sums[n].append(sumse[n])
+
+for i, fg in enumerate(flattened_groups):
+    sg = getSampleGroup(fg, exact = False)
+    arr = np.array(range(c_qoi_num[sg]))
+    np.random.shuffle(arr)
+    sample_cache[i] = arr
+
+# breakpoint()
+problem.resetBC(flattened_groups)
+# compute mean and variance
+# mus, Vs = problem.MOSAP.compute_BLUE_estimators(sums, sample_list)
+sol_mu = problem.solve(K=n_models)
 eval_sq = True
-sums = [[] for n in range(problem.n_outputs)]
-for ls,N in zip(flattened_groups, sample_list):
-    if N == 0:
-        for n in range(problem.n_outputs):
-            sums[n].append([0 for l in range(len(ls))])
-        continue
-    sumse,_,_ = problem.blue_fn(ls, N, verbose=False)
-    for n in range(problem.n_outputs):
-        sums[n].append(sumse[n])
+problem.resetBC(flattened_groups)
+# mus_sq, Vs_sq = problem.MOSAP.compute_BLUE_estimators(sums, sample_list)
+sol_sq = problem.solve(K=n_models)
 
-mus_sq, Vs_sq = problem.MOSAP.compute_BLUE_estimators(sums, sample_list)
 
+
+
+print("MLBLUE solution: ", sol_mu[0])
 print("\n")
 print("Standard Deviation:")
 stdv = []
-for i, item in enumerate(sol_MLBLUE[0]):
+for i, item in enumerate(sol_mu[0]):
     meansq = item**2 
-    stdv.append(np.sqrt(mus_sq[i] - meansq))
+    stdv.append(np.sqrt(sol_sq[0][i] - meansq))
 print(stdv)
 
 
