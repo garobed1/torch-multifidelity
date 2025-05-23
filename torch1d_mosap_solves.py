@@ -7,7 +7,12 @@ import matplotlib.pyplot as plt
 """
 Script for solving the MOSAP problem for torch1D-only covariances
 """
-
+plt.rcParams.update({
+    "text.usetex": True,
+    "font.family": "serif",
+    "font.serif": ["Palatino"],
+    "font.size": 18,
+})
 
 home = os.getenv('HOME')
 # in_dir = home + "/bedonian1/torch1d_resample_sens_r8/"
@@ -15,7 +20,8 @@ home = os.getenv('HOME')
 # suffix = '_massflux'
 # suffix = '_massflux_core'
 # suffix = '_time_avg'
-suffix = '_trunc'
+# suffix = '_trunc'
+suffix = '_pres'
 # out_dirs = [home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse"]
 # out_dirs = [home + "/bedonian1/tps2d_mf_post_r1/", home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse", home + "/bedonian1/torch1d_post_r1_pilot_4s"]
 # out_dirs = [home + "/bedonian1/tps2d_mf_post_r1_far/", home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse", home + "/bedonian1/torch1d_post_r1_pilot_4s"]
@@ -73,7 +79,7 @@ exclude = [60]
 
 
 
-make_plots = False
+make_plots = True
 # do single output for now
 out_use = [['exit_d', 0],
            ['exit_d', 1],
@@ -81,7 +87,7 @@ out_use = [['exit_d', 0],
            ['exit_T', 0],
            ['exit_X', 0]]
 # out_use = [['exit_X', 0]]
-
+qoi_list_plot = [['exit_v', 0], ['exit_T', 0], ['exit_X', 0]]
 # 
 
 
@@ -202,8 +208,10 @@ qoi_sizes = {
 }      
 
 Nplot = 0
-for key in qoi_list:
-    Nplot += qoi_sizes[key]
+# for key in qoi_list:
+#     Nplot += qoi_sizes[key]
+for key in qoi_list_plot:
+    Nplot += 1
 
 #Estimate Covariances
 C = {}
@@ -213,7 +221,7 @@ Corr2 = {}
 qdata = {}
 if make_plots:
 
-    fig, axs = plt.subplots(Nplot, 3, figsize=(15,4. * Nplot))
+    fig, axs = plt.subplots(Nplot, 3, figsize=(15, 4.*Nplot))
 
 cf = 0
 for qoi in qoi_list:
@@ -242,7 +250,7 @@ for qoi in qoi_list:
         # breakpoint()
         print("Squared")
         print(Corr2[qoi][j])
-        if make_plots:
+        if make_plots and np.any([(qoi == qoi_list_plot[x][0] and j == qoi_list_plot[x][1]) for x in range(len(qoi_list_plot))]):
 
             cax = axs[cf,0].matshow(Corr[qoi][j], vmin=0, vmax=1)
             for (m, n), o in np.ndenumerate(Corr[qoi][j]):
@@ -288,11 +296,13 @@ for qoi in qoi_list:
 
        
 
-        cf += 1
+            cf += 1
 if make_plots:
     fig.tight_layout()
     plt.savefig(f'model_corr_{n_models}{suffix}.png')
     plt.clf()
+
+    quit()
 
 n_pilot = qoi_val[out_names[0]][qoi].shape[0]
 
