@@ -3,72 +3,73 @@ import numpy as np
 import os
 import pickle
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 
 """
-Script for solving the MOSAP problem for torch1D-only covariances
+Script for solving the MOSAP problem for torch1d and tps (2D axisymmetric) samples due to chemistry uncertainty
+
+This script will:
+    1. Estimate and plot covariances of selected torch outputs between the supplied models
+    2. Solve the MOSAP problem with the BLUEST
 """
+
 plt.rcParams.update({
     "text.usetex": True,
     "font.family": "serif",
     "font.serif": ["Palatino"],
-    "font.size": 18,
+    "font.size": 16,
 })
 
 home = os.getenv('HOME')
-# in_dir = home + "/bedonian1/torch1d_resample_sens_r8/"
+plot_dir = 'plots'
+
+### Name
+
 # suffix = ''
 # suffix = '_massflux'
 # suffix = '_massflux_core'
 # suffix = '_time_avg'
-# suffix = '_trunc'
-suffix = '_pres'
+suffix = '_massflux2_core_poster'
+
+### Pilot Sample Data Directories
+
 # out_dirs = [home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse"]
 # out_dirs = [home + "/bedonian1/tps2d_mf_post_r1/", home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse", home + "/bedonian1/torch1d_post_r1_pilot_4s"]
-# out_dirs = [home + "/bedonian1/tps2d_mf_post_r1_far/", home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse", home + "/bedonian1/torch1d_post_r1_pilot_4s"]
-# out_dirs = [home + "/bedonian1/tps2d_mf_post_r1_far/", home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse"]#, home + "/bedonian1/torch1d_post_r1_pilot_4s"]
 out_dirs = [home + "/bedonian1/tps2d_mf_post_r1_massflux/", home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse"]#, home + "/bedonian1/torch1d_post_r1_pilot_4s"]
 # out_dirs = [home + "/bedonian1/tps2d_mf_post_r1_massflux_core/", home + "/bedonian1/torch1d_post_r1_pilot_fine_core", home + "/bedonian1/torch1d_post_r1_pilot_core", home + "/bedonian1/torch1d_post_r1_pilot_coarse_core"]#, home + "/bedonian1/torch1d_post_r1_pilot_4s"]
 # out_dirs = [home + "/bedonian1/tps2d_mf_post_r1_time_avg/", home + "/bedonian1/torch1d_post_r1_pilot_fine", home + "/bedonian1/torch1d_post_r1_pilot", home + "/bedonian1/torch1d_post_r1_pilot_coarse"]#, home + "/bedonian1/torch1d_post_r1_pilot_4s"]
-# correspond to out_dirs order
-# out_names = ["1D_Fine", "1D_Mid", "1D_Coarse"]
+
+### Model Names - correspond to out_dirs order
+
 # out_names = ["1D_Fine", "1D_Mid", "1D_Coarse", "1D_4Species"]
 # out_names = ["2D_Axi", "1D_Fine", "1D_Mid", "1D_Coarse", "1D_4Species"]
 out_names = ["2D_Axi", "1D_Fine", "1D_Mid", "1D_Coarse"]
-# non-pilot samples, use these for the actual MLBLUE evaluation, not for the MOSAP
-# provide as groups of directories
-# G4: tps2d, t1d_coarse
-# G2: t1d_coarse
-# G1: t1d_coarse
 
-# home + "/bedonian1/torch1d_post_r1_G3_fine",
-comp_dirs = {
-    'G1': [None, None, None, home + "/bedonian1/torch1d_post_r1_G1_coarse"],
-    'G2': [None, None, None, home + "/bedonian1/torch1d_post_r1_G2_coarse"],
-    'G3': [None, None, home + "/bedonian1/torch1d_post_r1_G3_mid", home + "/bedonian1/torch1d_post_r1_G3_coarse"],
-    'G4': [home + "/bedonian1/tps2d_mf_post_r1_G4/", home + "/bedonian1/torch1d_post_r1_G4_fine", home + "/bedonian1/torch1d_post_r1_G4_mid", home + "/bedonian1/torch1d_post_r1_G4_coarse"]
-}
+### List of Outputs to Compute/Account for in MOSAP
+out_use = [['exit_d', 0],
+           ['exit_d', 1],
+           ['exit_v', 0],
+           ['exit_T', 0],
+           ['exit_X', 0]]
 
-# keep track of failed tps2d cases
-c_exclude = {
-   'G1': [],
-   'G2': [],
-   'G3': [16, 95, 114, 120, 127,  146, 149, 156, 160, 187, 228],
-   'G4': [18, 71, 74]
-}
+### Model Cost Vector - NOTE advised to use a scaling factor if costs are large numbers
 
-# define costs
+con_scaler = 10000000
 # costs = np.array([12*60*60, 15*60, 11*60, 7*60])
 proc_fac = 112 # number of procs per tps run
 # proc_fac = 1 # number of procs per tps run
-costs = np.array([proc_fac*11.6*60*60, 17*60, 14*60, 11*60])
+costs = np.array([proc_fac*11.6*60*60, 17*60, 14*60, 11*60])/con_scaler
 
-# contract all models and dependent arrays to the indices of this list
-# restrict = [0, 3]
-restrict = list(range(len(out_names)))
+# MOSAP Statistical Error Threshold OR Cost Constraint - NOTE toggle the mode and set value appropriately
 
+# cost_constraint = False
+# eps_fac = 0.1
+# eps_fac = 0.05
+cost_constraint = True
+# eps_fac = 200000*3600/con_scaler
+eps_fac = 500000*3600/con_scaler
 
-# statistical error threshold
-eps_fac = 0.05
+### Number of Pilot Samples to Use - NOTE empty exclude list if all samples are valid
 
 # max_sample = 0 # no limit
 # max_sample = 64
@@ -77,18 +78,42 @@ max_sample = 48
 exclude = []
 exclude = [60]
 
+### Non-Pilot Samples - used for the actual MLBLUE evaluation, not for sovling the MOSAP - NOTE provide as groups of directories
 
+comp_dirs = {
+    'G1': [None, None, None, home + "/bedonian1/torch1d_post_r1_G1_coarse"],
+    'G2': [None, None, home + "/bedonian1/torch1d_post_r1_G2_mid", home + "/bedonian1/torch1d_post_r1_G2_coarse"],
+    # 'G3': [None, None, home + "/bedonian1/torch1d_post_r1_G3_mid", home + "/bedonian1/torch1d_post_r1_G3_coarse"],
+    'G3': [home + "/bedonian1/tps2d_mf_post_r1_G3/", None, home + "/bedonian1/torch1d_post_r1_G3_mid", home + "/bedonian1/torch1d_post_r1_G3_coarse"],
+    'G4': [home + "/bedonian1/tps2d_mf_post_r1_G4/", home + "/bedonian1/torch1d_post_r1_G4_fine", home + "/bedonian1/torch1d_post_r1_G4_mid", home + "/bedonian1/torch1d_post_r1_G4_coarse"]
+}
 
-make_plots = True
-# do single output for now
-out_use = [['exit_d', 0],
-           ['exit_d', 1],
-           ['exit_v', 0],
-           ['exit_T', 0],
-           ['exit_X', 0]]
-# out_use = [['exit_X', 0]]
+### Failed Samples - keep track of failed sample runs, especially tps2d cases - NOTE default to empty lists once all runs are successful
+
+c_exclude = {
+   'G1': [],
+   'G2': [],
+   'G3': [16,95, 114, 120, 127,  146, 149, 156, 160, 187, 212,  227, 228],
+   'G4': [18, 71, 74]
+}
+
+### Restrict the Model Set - NOTE for testing inclusion of models - contract all models and dependent arrays to the indices of this list
+
+# restrict = [0, 3]
+restrict = list(range(len(out_names)))
+
+### Plot Options - NOTE running plots at the moment will stop the script before solving the MOSAP
+
+make_plots = False
 qoi_list_plot = [['exit_v', 0], ['exit_T', 0], ['exit_X', 0]]
-# 
+# qoi_list_plot = [['exit_p', 0], ['exit_d', 0], ['exit_d', 1], ['exit_v', 0], ['exit_T', 0], ['exit_T', 1], ['exit_X', 0], ['exit_X', 1], ['exit_X', 2], ['exit_X', 3], ['exit_X', 4]]
+
+
+
+
+
+
+
 
 
 
@@ -100,6 +125,8 @@ qoi_list_plot = [['exit_v', 0], ['exit_T', 0], ['exit_X', 0]]
 
 
 ##########################################################################################################
+# Script Starts Here
+##########################################################################################################
 
 # apply restriction first
 out_dirs = [out_dirs[x] for x in restrict]
@@ -109,8 +136,6 @@ for key in comp_dirs.keys():
 costs = [costs[x] for x in restrict]
 
 n_outputs = len(out_use)
-
-##############################################################################
 
 # function to pick an appropriate sample group
 
@@ -148,6 +173,14 @@ def getSampleGroup(ls, exact = True):
 
 # flag to evaluate the square of output from MLBLUE, don't touch
 eval_sq = False
+
+# titles for QOI
+qoi_title = {'exit_p': ['Pressure'],
+           'exit_d': ['Ar Density', 'E Density'],
+           'exit_v': ['Axial Velocity'],
+           'exit_T': ['Ar Temperature', 'E Temperature'],
+           'exit_X': ['Ar+ Fraction', 'Ar Metastable Fraction', 'Ar Resonant Fraction', 'Ar 4p Fraction','Ar Higher Fraction']
+           }
 
 
 n_models = len(out_dirs)
@@ -198,6 +231,7 @@ for sg in comp_dirs.keys():
 
         c_qoi_num[sg] = min(c_qoi_num[sg], c_qoi_val[sg][out_names[i]][qoi_list[0]].shape[0])
 
+# NOTE put this in options?
 qoi_sizes = {
     'exit_p': 1, 
     'exit_d': 2, 
@@ -252,11 +286,12 @@ for qoi in qoi_list:
         print(Corr2[qoi][j])
         if make_plots and np.any([(qoi == qoi_list_plot[x][0] and j == qoi_list_plot[x][1]) for x in range(len(qoi_list_plot))]):
 
-            cax = axs[cf,0].matshow(Corr[qoi][j], vmin=0, vmax=1)
+            # cax = axs[cf,0].matshow(Corr[qoi][j], vmin=0, vmax=1)
+            cax = axs[cf,0].matshow(Corr[qoi][j], vmin=-1, vmax=1, cmap=mpl.colormaps['PiYG'])
             for (m, n), o in np.ndenumerate(Corr[qoi][j]):
                 axs[cf,0].text(n, m, '{:0.2f}'.format(o), ha='center', va='center')
                 
-            axs[cf,0].set_title(qoi + ' ' + str(j))
+            # axs[cf,0].set_title(qoi + ' ' + str(j))
             # if cf == 0:
             fig.colorbar(cax)
             # plt.xticks(list(range(len(out_names))), out_names)
@@ -265,8 +300,8 @@ for qoi in qoi_list:
             # breakpoint()
             axs[cf,0].set_xticks(list(range(len(out_names))))
             axs[cf,0].set_yticks(list(range(len(out_names))))
-            axs[cf,0].set_xticklabels(out_names)
-            axs[cf,0].set_yticklabels(out_names)
+            axs[cf,0].set_xticklabels(out_names, fontsize = 11)
+            axs[cf,0].set_yticklabels(out_names, fontsize = 14)
             
             if qoi == "exit_X":
                 plt.ticklabel_format(scilimits = [-2,3])
@@ -275,17 +310,19 @@ for qoi in qoi_list:
 
             # then plot data, pair tps2d and the fine torch1d
             axs[cf,1].set_title(qoi + ' ' + str(j))
+            axs[cf,1].set_title(qoi_title[qoi][j])
             # axs[cf,1].plot(qdata[qoi][j][0,:31], qdata[qoi][j][1,:], 'x')
-            axs[cf,1].plot(qdata[qoi][j][0,:31], qdata[qoi][j][1,:31], 'x')
-            axs[cf,1].plot(qdata[qoi][j][0,31:], qdata[qoi][j][1,31:], 'x')
+            # axs[cf,1].plot(qdata[qoi][j][0,:31], qdata[qoi][j][1,:31], 'x')
+            # axs[cf,1].plot(qdata[qoi][j][0,31:], qdata[qoi][j][1,31:], 'x')
+            axs[cf,1].plot(qdata[qoi][j][0,:], qdata[qoi][j][1,:], 'x')
             # axs[cf,1].plot()
             axs[cf,1].set_xlabel(out_names[0])
             axs[cf,1].set_ylabel(out_names[1])
 
-            axs[cf,2].set_title(qoi + ' ' + str(j))
-            # axs[cf,1].plot(qdata[qoi][j][0,:31], qdata[qoi][j][1,:], 'x')
-            axs[cf,2].plot(qdata[qoi][j][0,:31], qdata[qoi][j][1,:31], 'x')
-            axs[cf,2].plot(qdata[qoi][j][0,31:], qdata[qoi][j][1,31:], 'x')
+            # axs[cf,2].set_title(qoi + ' ' + str(j))
+            # axs[cf,2].plot(qdata[qoi][j][0,:31], qdata[qoi][j][1,:31], 'x')
+            # axs[cf,2].plot(qdata[qoi][j][0,31:], qdata[qoi][j][1,31:], 'x')
+            axs[cf,2].plot(qdata[qoi][j][0,:], qdata[qoi][j][1,:], 'x')
             # x = y
             xy = np.linspace(min(np.min(qdata[qoi][j][0,:]), np.min(qdata[qoi][j][1,:31])),
                              max(np.max(qdata[qoi][j][0,:]), np.max(qdata[qoi][j][1,:31])))
@@ -297,9 +334,10 @@ for qoi in qoi_list:
        
 
             cf += 1
+
 if make_plots:
     fig.tight_layout()
-    plt.savefig(f'model_corr_{n_models}{suffix}.png')
+    plt.savefig(plot_dir + f'/model_corr_{n_models}{suffix}.png')
     plt.clf()
 
     quit()
@@ -415,7 +453,10 @@ eps = [eps_fac*np.sqrt(problem.get_covariance(i)[0,0]) for i in range(n_outputs)
 
 # Solve with MLBLUE. K denotes the maximum group size allowed.
 # solves the opt problem
-MLBLUE_data = problem.setup_solver(K=n_models, eps=eps)
+if not cost_constraint:
+    MLBLUE_data = problem.setup_solver(K=n_models, eps=eps)
+else:
+    MLBLUE_data = problem.setup_solver(K=n_models, budget=eps_fac) #, solver ="ipopt"
 
 
 # sol_MLBLUE = problem.solve(K=n_models, eps=eps)
@@ -441,64 +482,52 @@ sample_list = problem.MOSAP_output['samples']
 #     for n in range(problem.n_outputs):
 #         sums[n].append(sumse[n])
 
-for i, fg in enumerate(flattened_groups):
-    sg = getSampleGroup(fg, exact = False)
-    arr = np.array(range(c_qoi_num[sg]))
-    np.random.shuffle(arr)
-    sample_cache[i] = arr
+# multiple trials
+NS = 10
+sol_mu = np.zeros([NS, n_outputs])
+sol_sq = np.zeros([NS, n_outputs])
+for k in range(NS):
 
-# breakpoint()
-problem.resetBC(flattened_groups)
-# compute mean and variance
-# mus, Vs = problem.MOSAP.compute_BLUE_estimators(sums, sample_list)
-sol_mu = problem.solve(K=n_models)
-eval_sq = True
-problem.resetBC(flattened_groups)
-# mus_sq, Vs_sq = problem.MOSAP.compute_BLUE_estimators(sums, sample_list)
-sol_sq = problem.solve(K=n_models)
+    for i, fg in enumerate(flattened_groups):
+        sg = getSampleGroup(fg, exact = False)
+        arr = np.array(range(c_qoi_num[sg]))
+        np.random.shuffle(arr)
+        sample_cache[i] = arr
+
+    # breakpoint()
+    problem.resetBC(flattened_groups)
+    # compute mean and variance
+    # mus, Vs = problem.MOSAP.compute_BLUE_estimators(sums, sample_list)
+    eval_sq = False
+    sol_mu[k,:] = problem.solve(K=n_models)[0][:]
+    eval_sq = True
+    problem.resetBC(flattened_groups)
+    # mus_sq, Vs_sq = problem.MOSAP.compute_BLUE_estimators(sums, sample_list)
+    sol_sq[k,:] = problem.solve(K=n_models)[0][:]
 
 
+sol_mu_avg = np.mean(sol_mu, axis=0)
+# sol_sq_avg = np.mean(sol_sq, axis=0)
 
-
-print("MLBLUE solution: ", sol_mu[0])
+print("MLBLUE solution avg: ", sol_mu_avg)
 print("\n")
-print("Standard Deviation:")
-stdv = []
-for i, item in enumerate(sol_mu[0]):
-    meansq = item**2 
-    stdv.append(np.sqrt(sol_sq[0][i] - meansq))
-print(stdv)
+print("Standard Deviation avg:")
+stdv = np.zeros([NS, n_outputs])
+for k in range(NS):
+    for i, item in enumerate(sol_mu[k,:]):
+        meansq = item**2 
+        stdv[k,i] = np.sqrt(sol_sq[k,i] - meansq)
+stdv_avg = np.nanmean(stdv, axis=0)
+print(stdv_avg)
+# print(stdv)
 
-
-# print("\n")
-# print("Solving for Variance ...")
-
-# problem2 = Problem_Exp_Sq(n_models, n_outputs=n_outputs, costs=costs, C=C_use_2, verbose=True)
-
-# print("Covariance matrix:\n")
-# print(problem2.get_covariance())
-# print("\nCorrelation matrix:\n")
-# print(problem2.get_correlation())
-
-# # same costs
-# print(problem2.get_costs())
-
-# # define statistical error tolerance
-# eps2 = [eps_fac2*np.sqrt(problem2.get_covariance(i)[0,0]) for i in range(n_outputs)]
-# # breakpoint()
-# # solve with standard MC
-# sol_MC2 = problem2.solve_mc(eps=eps2)
-# print("\n\nStd MC\n")
-# print("Std MC Variance solution: ", sol_MC2[0], "\nTotal cost: ", sol_MC2[2])
-
-# MLBLUE_data_2 = problem2.setup_solver(K=n_models, eps=eps2)
-# sol_MLBLUE_2 = problem2.solve(K=n_models, eps=eps2)
-
-# print("\n\nMLBLUE\n")
-# print("MLBLUE data:\n")
-# for key, item in MLBLUE_data_2.items(): print(key, ": ", item)
-# print("MLBLUE solution: ", sol_MLBLUE_2[0])
-
-
-
-breakpoint()
+print("Total M0 Samples")
+m0s = 0
+mAs = 0
+for i, samp in enumerate(MLBLUE_data['samples']):
+    mAs += samp
+    if 0 in MLBLUE_data['models'][i]:
+        m0s += samp
+print(m0s)
+print("Total Lower Fidelity Samples")
+print(mAs)

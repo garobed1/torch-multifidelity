@@ -1,0 +1,12 @@
+# torch-multifidelity
+
+This repo contains scripts for performing multifidelity uncertainty quantification for the ICP torch, relying on the `bluest` Python package to solve the sample allocation problem and estimate torch output statistical moments.
+
+
+### current data
+
+Currently, the scripts rely on collected simulation sample output data from `torch1D` and `tps`, considering input chemistry uncertainties which are modeled based on scripts from the `torch-chemistry` repo and propagated through the torch codes using scripts from the `torch-sensitivity` repo. Contact @garobed1 to inquire about obtaining the most up-to-date data, which are stored in individual directories per model and model group in particular `.pickle` formats.
+
+### functionality
+
+With the appropriate data, you can run `torch_bluest_solves.py` to estimate model covariances, solve the sample allocation problem, and make UQ estimates based on the allocated samples.
